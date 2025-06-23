@@ -13,82 +13,19 @@ import PyPDF2
 from streamlit_option_menu import option_menu
 import time
 import json
+import google.generativeai as genai
 
+# 🔐 Configure Gemini API
+import os
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+
+# 📥 Download required NLTK resources
 nltk.download('stopwords', quiet=True)
 nltk.download('wordnet', quiet=True)
 nltk.download('omw-1.4', quiet=True)
 
-st.markdown("""
-    <style>
-    body {
-        background-color: #f7f9fb;
-        font-family: 'Segoe UI', sans-serif;
-        color: #2d3436;
-    }
-    .main {
-        background-color: #ffffff;
-        padding: 30px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        color: #2d3436;
-    }
-    .header {
-        color: #2d3436;
-        font-weight: 700;
-        font-size: 26px;
-        margin-bottom: 15px;
-    }
-    .stButton > button {
-        background-color: #3498db;
-        color: #ffffff;
-        font-weight: 600;
-        padding: 12px 22px;
-        border: none;
-        border-radius: 10px;
-        transition: background-color 0.3s ease;
-    }
-    .stButton > button:hover {
-        background-color: #2980b9;
-    }
-    .stFileUploader, .stTextArea textarea {
-        background-color: #f2f4f7;
-        border: 1px solid #dfe6e9;
-        border-radius: 10px;
-        padding: 10px;
-        font-size: 14px;
-        color: #2d3436;
-    }
-    .metric-card {
-        background-color: #fdfefe;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #3498db;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        margin-top: 10px;
-        margin-bottom: 20px;
-        color: #2d3436;
-    }
-    .stMetric {
-        background-color: #f0f3f5;
-        padding: 12px;
-        border-radius: 10px;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-        color: #2d3436;
-    }
-    .stAlert {
-        background-color: #fef5e7 !important;
-        color: #7f8c8d !important;
-    }
-    .sidebar .sidebar-content {
-        background-color: #ecf0f1;
-        color: #2d3436;
-    }
-    .css-1aumxhk {
-        color: #2d3436 !important;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
+# 💾 Load Pretrained Models & Transformers
 @st.cache_resource
 def load_artifacts():
     tfidf_vectorizer = joblib.load('tfidf_vectorizer.pkl')
@@ -98,27 +35,64 @@ def load_artifacts():
     label_encoder = joblib.load('label_encoder.pkl')
     return tfidf_vectorizer, bert_model, logistic_model, label_encoder
 
-def cleanResume(txt):
+# 🧹 Text Preprocessing
+def clean_resume(txt):
     lemmatizer = WordNetLemmatizer()
     stopword = set(stopwords.words('english'))
-    cleanTxt = re.sub(r'http\S+\s', ' ', txt)
-    cleanTxt = re.sub(r'@\S+', '', cleanTxt)
-    cleanTxt = re.sub(r'#\S+', '', cleanTxt)
-    cleanTxt = re.sub(r'[%s]' % re.escape("""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"""), '', cleanTxt)
-    cleanTxt = re.sub(r'\s+', ' ', cleanTxt)
-    words = cleanTxt.split()
-    words = [lemmatizer.lemmatize(word) for word in words if word.lower() not in stopword]
+    txt = re.sub(r'http\S+\s', ' ', txt)
+    txt = re.sub(r'@\S+', '', txt)
+    txt = re.sub(r'#\S+', '', txt)
+    txt = re.sub(r'[%s]' % re.escape("""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"""), '', txt)
+    txt = re.sub(r'\s+', ' ', txt)
+    words = [lemmatizer.lemmatize(word) for word in txt.split() if word.lower() not in stopword]
     return ' '.join(words)
 
-tfidf_vectorizer, bert_model, logistic_model, label_encoder = load_artifacts()
+# 💡 Generate Gemini Suggestions
+def get_resume_suggestions(resume_text, category):
+    resume_text = resume_text[:4000]  # Avoid exceeding token limit
+    prompt = f"""
+    You are an expert resume analyzer.
+    Given the resume content below and the predicted category '{category}', 
+    suggest 3 specific improvements to make the resume stronger and more relevant to that category.
 
+    Resume:
+    {resume_text}
+    """
+    try:
+        response = gemini_model.generate_content(prompt)
+        return response.text if hasattr(response, "text") else "⚠️ No response received."
+    except Exception as e:
+        return f"❌ Gemini API error: {str(e)}"
+
+# 🎨 UI Styling
+st.markdown("""
+    <style>
+    body {
+        background-color: #f7f9fb;
+        font-family: 'Segoe UI', sans-serif;
+        color: #2d3436;
+    }
+    .main { background-color: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .header { color: #2d3436; font-weight: 700; font-size: 26px; margin-bottom: 15px; }
+    .stButton > button {
+        background-color: #3498db; color: #ffffff; font-weight: 600; padding: 12px 22px;
+        border: none; border-radius: 10px; transition: background-color 0.3s ease;
+    }
+    .stButton > button:hover { background-color: #2980b9; }
+    .stFileUploader, .stTextArea textarea {
+        background-color: #f2f4f7; border: 1px solid #dfe6e9;
+        border-radius: 10px; padding: 10px; font-size: 14px; color: #2d3436;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ⬅️ Sidebar Navigation
 with st.sidebar:
     st.markdown("<h2 style='color: #ffffff;'>Resume Classifier</h2>", unsafe_allow_html=True)
     selected = option_menu(
         menu_title=None,
         options=["Dashboard", "About", "Settings"],
         icons=["house", "info-circle", "gear"],
-        menu_icon="cast",
         default_index=0,
         styles={
             "container": {"background-color": "#2c3e50"},
@@ -128,121 +102,95 @@ with st.sidebar:
         }
     )
 
+# 🔍 Main Dashboard
+tfidf_vectorizer, bert_model, logistic_model, label_encoder = load_artifacts()
+
 if selected == "Dashboard":
     st.markdown("<div class='main'>", unsafe_allow_html=True)
     st.markdown("<div class='header'>📄 Resume Classification Dashboard</div>", unsafe_allow_html=True)
-    st.write("Upload a resume in PDF format or paste text to classify its category using advanced ML models.")
+    st.write("Upload a resume in PDF format or paste text to classify and get improvement suggestions.")
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        st.markdown("<div class='header'>📤 Upload Resume</div>", unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("Choose a PDF file", type="pdf", key="file_uploader")
+        uploaded_file = st.file_uploader("📤 Upload PDF Resume", type="pdf")
     with col2:
-        st.markdown("<div class='header'>📋 Paste Resume Text</div>", unsafe_allow_html=True)
-        resume_txt = st.text_area("", height=200, key="text_input")
+        resume_txt = st.text_area("📋 Paste Resume Text", height=200)
 
-    if st.button('🔍 Classify Resume', key="classify_button"):
-        if resume_txt or uploaded_file:
-            with st.spinner("Processing resume..."):
+    if st.button("🔍 Classify Resume"):
+        if uploaded_file or resume_txt:
+            with st.spinner("Processing..."):
                 time.sleep(1)
+
                 if uploaded_file:
-                    pdf_reader = PyPDF2.PdfReader(uploaded_file)
-                    resume_txt = ''
-                    for page in pdf_reader.pages:
-                        resume_txt += page.extract_text()
+                    resume_txt = ""
+                    reader = PyPDF2.PdfReader(uploaded_file)
+                    for page in reader.pages:
+                        resume_txt += page.extract_text() or ""
+
                 if not resume_txt.strip():
-                    st.error("⚠️ Could not extract text from PDF. Please try another file.")
+                    st.error("⚠️ Could not extract text. Try another file or input.")
                     st.stop()
-                cleaned_resume = cleanResume(resume_txt)
-                tfidf_vectorized = tfidf_vectorizer.transform([cleaned_resume])
-                bert_embeddings = bert_model.encode([cleaned_resume])
-                combined_features = np.hstack((tfidf_vectorized.toarray(), bert_embeddings))
-                prediction = logistic_model.predict(combined_features)
+
+                cleaned = clean_resume(resume_txt)
+                tfidf_vec = tfidf_vectorizer.transform([cleaned])
+                bert_vec = bert_model.encode([cleaned])
+                hybrid = np.hstack([tfidf_vec.toarray(), bert_vec])
+                prediction = logistic_model.predict(hybrid)
                 predicted_label = label_encoder.inverse_transform(prediction)[0]
-                confidence = np.max(logistic_model.predict_proba(combined_features))
-                probas = logistic_model.predict_proba(combined_features)[0]
-                top_n = np.argsort(probas)[::-1][:3]
-                top_labels = label_encoder.inverse_transform(top_n)
+                confidence = np.max(logistic_model.predict_proba(hybrid))
+                probas = logistic_model.predict_proba(hybrid)[0]
+                top3 = np.argsort(probas)[::-1][:3]
+                top_labels = label_encoder.inverse_transform(top3)
 
-                st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-                st.markdown(f"""
-    <div style="background-color: #d5f5e3; padding: 15px 20px; border-left: 6px solid #27ae60;
-                border-radius: 8px; font-size: 18px; color: #000000; margin-top: 10px;">
-        ✅ The resume is classified as: <strong>{predicted_label}</strong><br>
-        🔍 Confidence: <strong>{confidence:.2%}</strong>
-    </div>
-""", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+                # 💡 Gemini Suggestions
+                with st.spinner("Generating suggestions with Gemini..."):
+                    suggestions = get_resume_suggestions(resume_txt, predicted_label)
+                    st.markdown("### 💡 Gemini Resume Suggestions")
+                    st.write(suggestions)
 
-                st.markdown("<div class='header'>🔝 Top Predictions</div>", unsafe_allow_html=True)
+                st.success(f"✅ Predicted Category: **{predicted_label}**  \n🔍 Confidence: **{confidence:.2%}**")
+                st.markdown("---")
+
+                # 🔝 Top 3 Predictions
+                st.markdown("### 🔝 Top 3 Predictions")
                 for i in range(3):
-                    st.write(f"🔹 {top_labels[i]} — {probas[top_n[i]]:.2%}")
+                    st.write(f"🔹 {top_labels[i]} — {probas[top3[i]]:.2%}")
 
-                st.markdown("<div class='header'>🌥 Word Cloud of Cleaned Resume</div>", unsafe_allow_html=True)
-                wordcloud = WordCloud(width=800, height=400, background_color="white", colormap="viridis").generate(cleaned_resume)
-                fig, ax = plt.subplots(figsize=(10, 5))
-                ax.imshow(wordcloud, interpolation='bilinear')
-                ax.axis('off')
+                # 🌥 Word Cloud
+                st.markdown("### 🌥 Word Cloud")
+                wc = WordCloud(width=800, height=400, background_color="white").generate(cleaned)
+                fig, ax = plt.subplots(figsize=(10, 4))
+                ax.imshow(wc, interpolation="bilinear")
+                ax.axis("off")
                 st.pyplot(fig)
 
-                st.markdown("<div class='header'>📊 Classification Metrics</div>", unsafe_allow_html=True)
-                metrics_html = f"""
-                <div style="display: flex; gap: 20px; margin-top: 10px;">
-                    <div style="flex: 1; background-color: #ffffff; padding: 20px; border-radius: 10px;
-                                border-left: 5px solid #3498db; color: #000000; box-shadow: 0 2px 6px rgba(0,0,0,0.05);">
-                        <h5 style="margin: 0 0 5px;">Text Length</h5>
-                        <p style="font-size: 22px; font-weight: bold; margin: 0;">{len(resume_txt)} Characters</p>
-                    </div>
-                    <div style="flex: 1; background-color: #ffffff; padding: 20px; border-radius: 10px;
-                                border-left: 5px solid #3498db; color: #000000; box-shadow: 0 2px 6px rgba(0,0,0,0.05);">
-                        <h5 style="margin: 0 0 5px;">Cleaned Words</h5>
-                        <p style="font-size: 22px; font-weight: bold; margin: 0;">{len(cleaned_resume.split())} Words</p>
-                    </div>
-                    <div style="flex: 1; background-color: #ffffff; padding: 20px; border-radius: 10px;
-                                border-left: 5px solid #3498db; color: #000000; box-shadow: 0 2px 6px rgba(0,0,0,0.05);">
-                        <h5 style="margin: 0 0 5px;">Processing Time</h5>
-                        <p style="font-size: 22px; font-weight: bold; margin: 0;">2.5s</p>
-                    </div>
-                </div>
-                """
-                st.markdown(metrics_html, unsafe_allow_html=True)
-
-                st.markdown("<div class='header'>📁 Download Result</div>", unsafe_allow_html=True)
+                # 📥 Download
                 result = {
                     "Predicted Category": predicted_label,
                     "Confidence": f"{confidence:.2%}",
-                    "Top 3 Predictions": {
-                        top_labels[i]: f"{probas[top_n[i]]:.2%}" for i in range(3)
-                    },
-                    "Text Length": len(resume_txt),
-                    "Cleaned Word Count": len(cleaned_resume.split())
+                    "Top 3 Predictions": {top_labels[i]: f"{probas[top3[i]]:.2%}" for i in range(3)},
+                    "Suggestions": suggestions
                 }
-                st.download_button("📥 Download JSON", data=json.dumps(result, indent=2), file_name="classification_result.json")
-
-                with st.expander("📃 View Raw Resume Text"):
-                    st.text(resume_txt)
+                st.download_button("📁 Download JSON Result", data=json.dumps(result, indent=2), file_name="resume_analysis.json")
 
         else:
-            st.warning("⚠️ Please upload a file or paste some resume text.")
+            st.warning("⚠️ Please upload a resume or paste text.")
     st.markdown("</div>", unsafe_allow_html=True)
 
+# ℹ️ About Page
 elif selected == "About":
     st.markdown("<div class='main'>", unsafe_allow_html=True)
-    st.markdown("<div class='header'>ℹ️ About the Resume Classifier</div>", unsafe_allow_html=True)
+    st.markdown("<div class='header'>ℹ️ About</div>", unsafe_allow_html=True)
     st.write("""
-        This application uses a hybrid machine learning model combining TF-IDF and BERT embeddings to classify resumes into job categories.
-        Key features include:
-        - 📄 PDF resume parsing
-        - 🧹 Text cleaning with NLTK
-        - 🌥 Interactive word cloud visualization
-        - 🔍 Accurate classification with logistic regression
-        - 📥 Downloadable JSON results
+        This app classifies resumes into career categories using a hybrid ML model (TF-IDF + BERT + Logistic Regression).
+        It also uses Gemini (Google's LLM) to suggest improvements based on the predicted category.
     """)
     st.markdown("</div>", unsafe_allow_html=True)
 
+# ⚙️ Settings Page
 elif selected == "Settings":
     st.markdown("<div class='main'>", unsafe_allow_html=True)
     st.markdown("<div class='header'>⚙️ Settings</div>", unsafe_allow_html=True)
-    st.write("Adjust model parameters or upload new models (future feature).")
+    st.write("Future support: Upload custom models, set thresholds, and personalize suggestions.")
     st.slider("Confidence Threshold", 0.0, 1.0, 0.5, disabled=True)
     st.markdown("</div>", unsafe_allow_html=True)
